@@ -1,0 +1,47 @@
+# ==========================================
+# Compilación y Herramientas (CLion / CMake)
+# ==========================================
+cmake-build-debug/
+cmake-build-release/
+cmake-build-*/
+.idea/
+.vs/
+*.vcxproj.user
+
+# ==========================================
+# Windows (Sistema Operativo y Compiladores)
+# ==========================================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.stackdump
+
+# Archivos ejecutable y librerías en Windows
+*.exe
+*.dll
+*.obj
+*.lib
+*.pdb
+*.idb
+*.ilk
+*.exp
+
+# ==========================================
+# macOS (Sistema Operativo)
+# ==========================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ==========================================
+# Archivos Temporales de C++ / Qt
+# ==========================================
+*.o
+*.a
+*.dylib
+*.so
+*.user
+Makefile
+*.qrc.depends
