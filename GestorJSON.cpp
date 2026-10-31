@@ -1,12 +1,64 @@
 #include "GestorJSON.h"
 #include "IGeneradorTicket.h"
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QStandardPaths>
+
+namespace {
+QString rutaDatos(const QString& nombreArchivo) {
+    QString directorio = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (directorio.isEmpty()) {
+        directorio = QDir::home().filePath(".una-pulpe");
+    }
+    QDir().mkpath(directorio);
+
+    const QString destino = QDir(directorio).filePath(nombreArchivo);
+    if (!QFile::exists(destino)) {
+        const QStringList candidatos = {
+            QDir::current().filePath(nombreArchivo),
+            QDir(QCoreApplication::applicationDirPath()).filePath(nombreArchivo)
+        };
+        for (const QString& origen : candidatos) {
+            if (QFileInfo(origen).absoluteFilePath() == QFileInfo(destino).absoluteFilePath()) {
+                continue;
+            }
+            if (QFile::exists(origen) && QFile::copy(origen, destino)) {
+                break;
+            }
+        }
+    }
+    return destino;
+}
+
+bool guardarJsonAtomico(const QString& ruta, const QJsonDocument& documento) {
+    const QFileInfo info(ruta);
+    if (!QDir().mkpath(info.absolutePath())) {
+        return false;
+    }
+
+    QSaveFile archivo(ruta);
+    if (!archivo.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
+    }
+
+    const QByteArray contenido = documento.toJson();
+    if (archivo.write(contenido) != contenido.size()) {
+        archivo.cancelWriting();
+        return false;
+    }
+    return archivo.commit();
+}
+}
 
 GestorJSON::GestorJSON(const QString& rutaProds, const QString& rutaVnts)
-    : rutaProductos(rutaProds), rutaVentas(rutaVnts) {}
+    : rutaProductos(rutaProds.isEmpty() ? rutaDatos("productos.json") : rutaProds),
+      rutaVentas(rutaVnts.isEmpty() ? rutaDatos("ventas.json") : rutaVnts) {}
 
 std::vector<std::shared_ptr<Usuario>> GestorJSON::cargarUsuarios() {
     std::vector<std::shared_ptr<Usuario>> lista;
-    QFile archivo("usuarios.json");
+    QFile archivo(rutaDatos("usuarios.json"));
 
     if (!archivo.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return lista;
@@ -46,14 +98,7 @@ bool GestorJSON::guardarUsuarios(const std::vector<std::shared_ptr<Usuario>>& us
     }
 
     QJsonDocument doc(array);
-    QFile archivo("usuarios.json");
-    if (!archivo.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        return false;
-    }
-
-    archivo.write(doc.toJson());
-    archivo.close();
-    return true;
+    return guardarJsonAtomico(rutaDatos("usuarios.json"), doc);
 }
 
 std::vector<ProductoItem> GestorJSON::cargarProductos() {
@@ -100,14 +145,7 @@ bool GestorJSON::guardarProductos(const std::vector<ProductoItem>& productos) {
     }
 
     QJsonDocument doc(array);
-    QFile archivo(rutaProductos);
-    if (!archivo.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        return false;
-    }
-
-    archivo.write(doc.toJson());
-    archivo.close();
-    return true;
+    return guardarJsonAtomico(rutaProductos, doc);
 }
 
 std::vector<DatosVentaTicket> GestorJSON::cargarVentas() {
@@ -182,14 +220,7 @@ bool GestorJSON::guardarVentas(const std::vector<DatosVentaTicket>& ventas) {
     }
 
     QJsonDocument doc(arrayVentas);
-    QFile archivo(rutaVentas);
-    if (!archivo.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        return false;
-    }
-
-    archivo.write(doc.toJson());
-    archivo.close();
-    return true;
+    return guardarJsonAtomico(rutaVentas, doc);
 }
 
 bool GestorJSON::registrarVenta(const DatosVentaTicket& venta) {

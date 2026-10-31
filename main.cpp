@@ -4,6 +4,8 @@
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+    app.setOrganizationName("UNA");
+    app.setApplicationName("LaPulpe");
 
     VentanaLogin login;
     if (login.exec() == QDialog::Accepted) {

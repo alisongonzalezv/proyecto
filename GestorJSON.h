@@ -17,7 +17,7 @@ private:
     QString rutaVentas;
 
 public:
-    explicit GestorJSON(const QString& rutaProds = "productos.json", const QString& rutaVnts = "ventas.json");
+    explicit GestorJSON(const QString& rutaProds = QString(), const QString& rutaVnts = QString());
 
     // Productos
     std::vector<ProductoItem> cargarProductos();

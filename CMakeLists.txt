@@ -6,7 +6,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets PrintSupport)
 
 add_executable(LaPulpe
         main.cpp
@@ -16,6 +16,7 @@ add_executable(LaPulpe
         VentanaPrincipal.cpp
         VistaVentas.h
         VistaVentas.cpp
+        CategoriasProducto.h
         VistaInventario.h
         VistaInventario.cpp
         VistaHistorial.h
@@ -27,4 +28,4 @@ add_executable(LaPulpe
         VistaUsuarios.h
 )
 
-target_link_libraries(LaPulpe PRIVATE Qt6::Widgets)
+target_link_libraries(LaPulpe PRIVATE Qt6::Widgets Qt6::PrintSupport)
