@@ -39,6 +39,7 @@ class VistaVentas : public QWidget {
 
 private:
     QLineEdit* txtBuscar;
+    QHBoxLayout* layoutCategorias;
     QVBoxLayout* layoutListaCarrito;
     QWidget* contenedorCarrito;
     QGridLayout* gridProductos;
@@ -61,15 +62,16 @@ private:
     std::vector<ProductoItem> catalogo;
     std::vector<ItemCarrito> carrito;
     QString categoriaSeleccionada;
+    QString nombreCajero;
 
     double subtotalActual;
     double ivaActual;
     double descuentoActual;
     double totalActual;
-    int contadorVentas;
 
 public:
-    explicit VistaVentas(QWidget* parent = nullptr);
+    explicit VistaVentas(const QString& nombreUsuario, QWidget* parent = nullptr);
+    void actualizarCatalogo();
 
 private slots:
     void cambiarCategoriaSlot(const QString& cat);
@@ -77,6 +79,7 @@ private slots:
 private:
     void cargarCatalogoDemo();
     void configurarInterfaz();
+    void renderizarCategorias();
 
     void renderizarProductos();
     void renderizarCarrito();

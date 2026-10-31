@@ -36,6 +36,9 @@ public:
     explicit VistaInventario(QWidget* parent = nullptr);
     void actualizar(); // Permite recargar la tabla externamente
 
+signals:
+    void productosActualizados();
+
 protected:
     void showEvent(QShowEvent* event) override; // Se ejecuta automáticamente al abrir la vista
 
@@ -43,9 +46,10 @@ private:
     void configurarInterfaz();
     void cargarDatos();
     void renderizarTabla();
+    void actualizarCategoriasFiltro();
 
     void abrirFormularioProducto(ProductoItem* productoExistente = nullptr);
-    void guardarProductoEnJSON(const ProductoItem& prod, bool esEdicion);
+    bool guardarProductoEnJSON(const ProductoItem& prod, bool esEdicion);
     void eliminarProductoSeleccionado();
     void filtrarTabla();
 };

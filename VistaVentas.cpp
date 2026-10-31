@@ -1,14 +1,24 @@
 #include "VistaVentas.h"
 #include "GestorJSON.h"
+#include "CategoriasProducto.h"
+#include <algorithm>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFont>
+#include <QPageLayout>
+#include <QPageSize>
+#include <QPrinter>
+#include <QStandardPaths>
+#include <QTextDocument>
 
-VistaVentas::VistaVentas(QWidget* parent) : QWidget(parent) {
+VistaVentas::VistaVentas(const QString& nombreUsuario, QWidget* parent)
+    : QWidget(parent), nombreCajero(nombreUsuario.trimmed()) {
     categoriaSeleccionada = "Todos";
     subtotalActual = 0.0;
     ivaActual = 0.0;
     descuentoActual = 0.0;
     totalActual = 0.0;
-    contadorVentas = 1001;
-
     cargarCatalogoDemo();
     configurarInterfaz();
     renderizarProductos();
@@ -44,6 +54,33 @@ void VistaVentas::cargarCatalogoDemo() {
     }
 }
 
+void VistaVentas::actualizarCatalogo() {
+    GestorJSON gestor;
+    catalogo = gestor.cargarProductos();
+
+    for (auto it = carrito.begin(); it != carrito.end();) {
+        auto producto = std::find_if(catalogo.begin(), catalogo.end(), [&](const ProductoItem& actual) {
+            return actual.id == it->producto.id;
+        });
+
+        if (producto == catalogo.end() || producto->stock <= 0) {
+            it = carrito.erase(it);
+            continue;
+        }
+
+        it->producto = *producto;
+        if (it->cantidad > producto->stock) {
+            it->cantidad = producto->stock;
+        }
+        ++it;
+    }
+
+    renderizarCategorias();
+    renderizarProductos();
+    renderizarCarrito();
+    actualizarTotales();
+}
+
 void VistaVentas::configurarInterfaz() {
     QHBoxLayout* layoutPrincipal = new QHBoxLayout(this);
     layoutPrincipal->setContentsMargins(15, 15, 15, 15);
@@ -67,29 +104,9 @@ void VistaVentas::configurarInterfaz() {
     layoutIzquierdo->addWidget(txtBuscar);
 
     // Filtros por Categoría
-    QHBoxLayout* layoutCategorias = new QHBoxLayout();
+    layoutCategorias = new QHBoxLayout();
     layoutCategorias->setSpacing(8);
-
-    QStringList categorias = {"Todos", "Snacks", "Bebidas", "Comida", "Útiles", "Higiene"};
-
-    for (const QString& cat : categorias) {
-        QPushButton* btnCat = new QPushButton(cat, this);
-        btnCat->setCheckable(true);
-        if (cat == "Todos") btnCat->setChecked(true);
-
-        if (cat == "Todos") {
-            btnCat->setStyleSheet("QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border: none; border-radius: 8px; padding: 8px 16px; font-size: 12px; }");
-        } else {
-            btnCat->setStyleSheet("QPushButton { background-color: #ffffff; color: #4b5563; font-weight: 500; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 16px; font-size: 12px; } QPushButton:hover { background-color: #f3f4f6; }");
-        }
-
-        connect(btnCat, &QPushButton::clicked, [this, cat]() {
-            cambiarCategoriaSlot(cat);
-        });
-
-        layoutCategorias->addWidget(btnCat);
-    }
-    layoutCategorias->addStretch();
+    renderizarCategorias();
     layoutIzquierdo->addLayout(layoutCategorias);
 
     // Grid de Productos
@@ -177,6 +194,8 @@ void VistaVentas::configurarInterfaz() {
     comboTipoDescuento->setStyleSheet(
         "QComboBox { background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; "
         "padding: 2px 6px; font-size: 11px; color: #111827; }"
+        "QComboBox QAbstractItemView { background-color: #ffffff; color: #111827; "
+        "selection-background-color: #d1fae5; selection-color: #111827; }"
         "QComboBox::drop-down { border: none; }"
     );
 
@@ -205,56 +224,65 @@ void VistaVentas::configurarInterfaz() {
     layoutDesc->addWidget(spinDescuento);
     layoutDerecho->addLayout(layoutDesc);
 
-    // Total a Pagar
-    QHBoxLayout* layoutTotal = new QHBoxLayout();
-    QLabel* lblTextTotal = new QLabel("Total a Pagar", this);
-    lblTextTotal->setStyleSheet("color: #111827; font-weight: bold; font-size: 15px; border: none;");
-    lblTotal = new QLabel("₡ 0.00", this);
-    lblTotal->setStyleSheet("color: #10b981; font-weight: bold; font-size: 18px; border: none;");
+    // Total a pagar
+    QFrame* panelTotal = new QFrame(this);
+    panelTotal->setStyleSheet("QFrame { background-color: #ecfdf5; border: none; border-radius: 10px; }");
+    QHBoxLayout* layoutTotal = new QHBoxLayout(panelTotal);
+    layoutTotal->setContentsMargins(12, 10, 12, 10);
+    QLabel* lblTextTotal = new QLabel("Total a pagar", panelTotal);
+    lblTextTotal->setStyleSheet("color: #111827; font-weight: bold; font-size: 14px; border: none; background: transparent;");
+    lblTotal = new QLabel("₡ 0.00", panelTotal);
+    lblTotal->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    lblTotal->setStyleSheet("color: #047857; font-weight: bold; font-size: 17px; border: none; background: transparent;");
     layoutTotal->addWidget(lblTextTotal);
     layoutTotal->addStretch();
     layoutTotal->addWidget(lblTotal);
-    layoutDerecho->addLayout(layoutTotal);
+    layoutDerecho->addWidget(panelTotal);
 
-    // Panel Solo Efectivo
-    QLabel* lblPago = new QLabel("Pago en Efectivo", this);
-    lblPago->setStyleSheet("font-size: 13px; font-weight: bold; color: #111827; border: none; margin-top: 4px;");
-    layoutDerecho->addWidget(lblPago);
-
-    QWidget* panelEfectivo = new QWidget(this);
+    // Panel de pago en efectivo
+    QFrame* panelEfectivo = new QFrame(this);
+    panelEfectivo->setObjectName("panelEfectivo");
+    panelEfectivo->setStyleSheet("QFrame#panelEfectivo { background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; }");
     QVBoxLayout* layoutEfectivo = new QVBoxLayout(panelEfectivo);
-    layoutEfectivo->setContentsMargins(0, 0, 0, 0);
-    layoutEfectivo->setSpacing(6);
+    layoutEfectivo->setContentsMargins(12, 10, 12, 10);
+    layoutEfectivo->setSpacing(8);
 
-    QHBoxLayout* layoutMonto = new QHBoxLayout();
-    QLabel* lblPagaCon = new QLabel("Paga con: ₡", panelEfectivo);
-    lblPagaCon->setStyleSheet("font-size: 12px; color: #374151; font-weight: bold; border: none;");
+    QLabel* lblPago = new QLabel("Pago en efectivo", panelEfectivo);
+    lblPago->setStyleSheet("font-size: 13px; font-weight: bold; color: #111827; border: none; background: transparent;");
+    layoutEfectivo->addWidget(lblPago);
 
+    QGridLayout* layoutDatosPago = new QGridLayout();
+    layoutDatosPago->setContentsMargins(0, 0, 0, 0);
+    layoutDatosPago->setHorizontalSpacing(10);
+    layoutDatosPago->setVerticalSpacing(8);
+
+    QLabel* lblPagaCon = new QLabel("Paga con", panelEfectivo);
+    lblPagaCon->setStyleSheet("font-size: 12px; color: #4b5563; border: none; background: transparent;");
     spinMontoPaga = new QDoubleSpinBox(panelEfectivo);
     spinMontoPaga->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spinMontoPaga->setRange(0.0, 1000000.0);
     spinMontoPaga->setDecimals(2);
+    spinMontoPaga->setPrefix("₡ ");
+    spinMontoPaga->setMinimumHeight(36);
     spinMontoPaga->setStyleSheet(
-        "QDoubleSpinBox { background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; "
-        "padding: 5px 8px; font-size: 13px; font-weight: bold; color: #111827; }"
+        "QDoubleSpinBox { background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 7px; "
+        "padding: 5px 9px; font-size: 13px; color: #111827; }"
         "QDoubleSpinBox:focus { border: 1px solid #10b981; }"
     );
 
-    layoutMonto->addWidget(lblPagaCon);
-    layoutMonto->addWidget(spinMontoPaga);
-    layoutEfectivo->addLayout(layoutMonto);
-
-    QHBoxLayout* layoutCambio = new QHBoxLayout();
-    QLabel* lblTextoCambio = new QLabel("Vuelto / Cambio:", panelEfectivo);
-    lblTextoCambio->setStyleSheet("font-size: 12px; color: #6b7280; border: none;");
+    QLabel* lblTextoCambio = new QLabel("Vuelto / cambio", panelEfectivo);
+    lblTextoCambio->setStyleSheet("font-size: 12px; color: #4b5563; border: none; background: transparent;");
     lblCambio = new QLabel("₡ 0.00", panelEfectivo);
-    lblCambio->setStyleSheet("font-size: 13px; font-weight: bold; color: #10b981; border: none;");
+    lblCambio->setMinimumWidth(145);
+    lblCambio->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    lblCambio->setStyleSheet("font-size: 13px; font-weight: bold; color: #111827; border: none; background: transparent;");
 
-    layoutCambio->addWidget(lblTextoCambio);
-    layoutCambio->addStretch();
-    layoutCambio->addWidget(lblCambio);
-    layoutEfectivo->addLayout(layoutCambio);
-
+    layoutDatosPago->addWidget(lblPagaCon, 0, 0);
+    layoutDatosPago->addWidget(spinMontoPaga, 0, 1);
+    layoutDatosPago->addWidget(lblTextoCambio, 1, 0);
+    layoutDatosPago->addWidget(lblCambio, 1, 1);
+    layoutDatosPago->setColumnStretch(1, 1);
+    layoutEfectivo->addLayout(layoutDatosPago);
     layoutDerecho->addWidget(panelEfectivo);
 
     connect(spinMontoPaga, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &VistaVentas::calcularCambioEfectivo);
@@ -274,7 +302,39 @@ void VistaVentas::configurarInterfaz() {
 
 void VistaVentas::cambiarCategoriaSlot(const QString& cat) {
     categoriaSeleccionada = cat;
+    renderizarCategorias();
     filtrarProductos();
+}
+
+void VistaVentas::renderizarCategorias() {
+    while (QLayoutItem* item = layoutCategorias->takeAt(0)) {
+        if (QWidget* widget = item->widget()) {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+
+    QStringList categorias = {"Todos"};
+    categorias.append(categoriasProductoPredefinidas());
+    for (const auto& producto : catalogo) {
+        const QString categoria = producto.categoria.trimmed();
+        if (!categoria.isEmpty() && !categorias.contains(categoria)) categorias.append(categoria);
+    }
+    if (!categorias.contains(categoriaSeleccionada)) categoriaSeleccionada = "Todos";
+
+    for (const QString& cat : categorias) {
+        QPushButton* btnCat = new QPushButton(cat, this);
+        btnCat->setCheckable(true);
+        const bool activa = (cat == categoriaSeleccionada);
+        btnCat->setChecked(activa);
+        btnCat->setStyleSheet(activa
+            ? "QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border: none; border-radius: 8px; padding: 8px 16px; font-size: 12px; }"
+            : "QPushButton { background-color: #ffffff; color: #4b5563; font-weight: 500; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 16px; font-size: 12px; } QPushButton:hover { background-color: #f3f4f6; }");
+        connect(btnCat, &QPushButton::clicked, this, [this, cat]() { cambiarCategoriaSlot(cat); });
+        layoutCategorias->addWidget(btnCat);
+    }
+    layoutCategorias->addStretch();
 }
 
 void VistaVentas::filtrarProductos() {
@@ -374,8 +434,17 @@ void VistaVentas::agregarAlCarrito(const ProductoItem& prod) {
     }
 
     if (cantidadEnCarrito + 1 > prod.stock) {
-        QMessageBox::warning(this, "Stock Insuficiente",
-            QString("No se puede agregar más unidades de '%1'. Stock disponible: %2").arg(prod.nombre).arg(prod.stock));
+        QMessageBox mensaje(this);
+        mensaje.setWindowTitle("Stock Insuficiente");
+        mensaje.setText(QString("No se puede agregar más unidades de '%1'. Stock disponible: %2")
+                            .arg(prod.nombre).arg(prod.stock));
+        mensaje.setIcon(QMessageBox::Warning);
+        mensaje.setStyleSheet(
+            "QMessageBox { background-color: #ffffff; } "
+            "QLabel { color: #000000; font-size: 13px; } "
+            "QPushButton { color: #000000; background-color: #f3f4f6; border-radius: 6px; padding: 6px 12px; }"
+        );
+        mensaje.exec();
         return;
     }
 
@@ -540,15 +609,10 @@ void VistaVentas::calcularCambioEfectivo() {
     double pagaCon = spinMontoPaga->value();
     double cambio = pagaCon - totalActual;
 
-    if (totalActual == 0.0) {
-        lblCambio->setText("₡ 0.00");
-        lblCambio->setStyleSheet("font-size: 13px; font-weight: bold; color: #10b981; border: none;");
-    } else if (cambio < 0.0) {
-        lblCambio->setText("Falta Dinero");
-        lblCambio->setStyleSheet("font-size: 12px; font-weight: bold; color: #ef4444; border: none;");
+    if (totalActual > 0.0 && cambio < 0.0) {
+        lblCambio->setText(QString("Falta ₡ %1").arg(-cambio, 0, 'f', 2));
     } else {
-        lblCambio->setText(QString("₡ %1").arg(cambio, 0, 'f', 2));
-        lblCambio->setStyleSheet("font-size: 13px; font-weight: bold; color: #10b981; border: none;");
+        lblCambio->setText(QString("₡ %1").arg(totalActual > 0.0 ? cambio : 0.0, 0, 'f', 2));
     }
 }
 
@@ -560,6 +624,14 @@ void VistaVentas::procesarCheckout() {
         msg.setIcon(QMessageBox::Warning);
         msg.setStyleSheet("QMessageBox { background-color: #ffffff; } QLabel { color: #111827; font-size: 13px; } QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border-radius: 6px; padding: 6px 15px; }");
         msg.exec();
+        return;
+    }
+
+    // Releer los datos persistidos para cobrar con el precio y stock más recientes.
+    actualizarCatalogo();
+    if (carrito.empty()) {
+        QMessageBox::warning(this, "Orden actualizada",
+                             "Los productos de la orden ya no están disponibles. Revise el carrito.");
         return;
     }
 
@@ -597,20 +669,40 @@ void VistaVentas::procesarCheckout() {
         return;
     }
 
-    // 1. Rebaja única de inventario en memoria
+    // 1. Rebajar el stock actualizado en memoria.
+    const std::vector<ProductoItem> catalogoAntesDeVenta = catalogo;
     for (const auto& item : carrito) {
         for (auto& prodCat : catalogo) {
             if (prodCat.id == item.producto.id) {
+                if (prodCat.stock < item.cantidad) {
+                    actualizarCatalogo();
+                    QMessageBox::warning(this, "Stock actualizado",
+                                         "El stock cambió mientras se procesaba la orden. Revise el carrito.");
+                    return;
+                }
                 prodCat.stock -= item.cantidad;
                 break;
             }
         }
     }
 
-    // 2. Datos del Ticket
+    // 2. Datos del Ticket: continuar después del número más alto ya guardado.
+    GestorJSON gestor;
+    int numeroVentaMaximo = 1000;
+    for (const auto& venta : gestor.cargarVentas()) {
+        if (!venta.idVenta.startsWith("V-")) {
+            continue;
+        }
+        bool numeroValido = false;
+        const int numero = venta.idVenta.mid(2).toInt(&numeroValido);
+        if (numeroValido) {
+            numeroVentaMaximo = std::max(numeroVentaMaximo, numero);
+        }
+    }
+
     DatosVentaTicket datos;
-    datos.idVenta = QString("V-%1").arg(contadorVentas++);
-    datos.cajero = "Cajero Turno UNA";
+    datos.idVenta = QString("V-%1").arg(numeroVentaMaximo + 1);
+    datos.cajero = nombreCajero.isEmpty() ? "Usuario desconocido" : nombreCajero;
     datos.fechaHora = QDateTime::currentDateTime();
     datos.subtotal = subtotalActual;
     datos.iva = ivaActual;
@@ -623,11 +715,21 @@ void VistaVentas::procesarCheckout() {
     }
 
     // 3. Persistir en disco (Archivos JSON)
-    GestorJSON gestor;
-    gestor.guardarProductos(catalogo); // Guarda el inventario con el stock rebajado
-    gestor.registrarVenta(datos);     // Registra la transacción completa en ventas.json
+    if (!gestor.guardarProductos(catalogo)) {
+        actualizarCatalogo();
+        QMessageBox::critical(this, "Error", "No se pudo guardar el nuevo stock. La venta no se completó.");
+        return;
+    }
+    if (!gestor.registrarVenta(datos)) {
+        const bool stockRestaurado = gestor.guardarProductos(catalogoAntesDeVenta);
+        actualizarCatalogo();
+        QMessageBox::critical(this, "Error", stockRestaurado
+            ? "No se pudo registrar la venta. Se restauró el stock anterior."
+            : "No se pudo registrar la venta ni restaurar el stock. Revise el inventario.");
+        return;
+    }
 
-    // 4. Mostrar ticket en pantalla y generar archivo TXT
+    // 4. Mostrar el ticket y permitir descargarlo como PDF
     mostrarYGuardarTicket(datos);
 
     // 5. Reiniciar orden y limpiar campos
@@ -640,19 +742,9 @@ void VistaVentas::procesarCheckout() {
 }
 
 void VistaVentas::mostrarYGuardarTicket(const DatosVentaTicket& datos) {
-    std::unique_ptr<IGeneradorTicket> generadorTXT = std::make_unique<GeneradorTicketTXT>();
     std::unique_ptr<IGeneradorTicket> generadorHTML = std::make_unique<GeneradorTicketHTML>();
 
-    QString contenidoTXT = generadorTXT->generarContenido(datos);
     QString contenidoHTML = generadorHTML->generarContenido(datos);
-
-    QString nombreArchivo = QString("Ticket_%1%2").arg(datos.idVenta, generadorTXT->obtenerExtension());
-    QFile file(nombreArchivo);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QTextStream out(&file);
-        out << contenidoTXT;
-        file.close();
-    }
 
     QDialog dlgTicket(this);
     dlgTicket.setWindowTitle("Ticket de Compra - UNA Pulpe");
@@ -666,14 +758,81 @@ void VistaVentas::mostrarYGuardarTicket(const DatosVentaTicket& datos) {
     textViewer->setHtml(contenidoHTML);
     textViewer->setStyleSheet("QTextBrowser { border: 1px solid #e5e7eb; border-radius: 8px; background-color: #ffffff; color: #111827; padding: 10px; }");
 
-    QPushButton* btnCerrar = new QPushButton("Aceptar", &dlgTicket);
-    btnCerrar->setStyleSheet("QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border: none; border-radius: 8px; padding: 10px; font-size: 13px; }"
-                             "QPushButton:hover { background-color: #059669; }");
+    QHBoxLayout* layoutBotones = new QHBoxLayout();
+
+    QPushButton* btnDescargar = new QPushButton("Descargar PDF", &dlgTicket);
+    btnDescargar->setStyleSheet(
+        "QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border: none; border-radius: 8px; padding: 10px; font-size: 13px; }"
+        "QPushButton:hover { background-color: #059669; }"
+    );
+
+    QPushButton* btnCerrar = new QPushButton("Cerrar", &dlgTicket);
+    btnCerrar->setStyleSheet(
+        "QPushButton { background-color: #f3f4f6; color: #374151; font-weight: bold; border: none; border-radius: 8px; padding: 10px; font-size: 13px; }"
+        "QPushButton:hover { background-color: #e5e7eb; }"
+    );
     connect(btnCerrar, &QPushButton::clicked, &dlgTicket, &QDialog::accept);
+
+    connect(btnDescargar, &QPushButton::clicked, &dlgTicket, [&dlgTicket, &datos, &contenidoHTML]() {
+        QString carpetaDocumentos = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (carpetaDocumentos.isEmpty()) {
+            carpetaDocumentos = QDir::homePath();
+        }
+        const QString nombreSugerido = QString("Ticket_%1.pdf").arg(datos.idVenta);
+        QString rutaPDF = QFileDialog::getSaveFileName(
+            &dlgTicket,
+            "Guardar ticket como PDF",
+            QDir(carpetaDocumentos).filePath(nombreSugerido),
+            "Documento PDF (*.pdf)"
+        );
+        if (rutaPDF.isEmpty()) {
+            return;
+        }
+        if (!rutaPDF.endsWith(".pdf", Qt::CaseInsensitive)) {
+            rutaPDF += ".pdf";
+        }
+
+        QPrinter impresora(QPrinter::HighResolution);
+        impresora.setOutputFormat(QPrinter::PdfFormat);
+        impresora.setOutputFileName(rutaPDF);
+        const qreal altoTicketMm = qBound<qreal>(120.0, 95.0 + datos.items.size() * 8.0, 300.0);
+        impresora.setPageSize(QPageSize(QSizeF(80.0, altoTicketMm), QPageSize::Millimeter,
+                                        "Ticket", QPageSize::ExactMatch));
+        impresora.setPageMargins(QMarginsF(4, 5, 4, 5), QPageLayout::Millimeter);
+
+        QString contenidoPDF = contenidoHTML;
+        contenidoPDF.replace("font-size: 12px", "font-size: 11pt");
+        contenidoPDF.replace("font-size: 11px", "font-size: 9pt");
+        contenidoPDF.replace("font-size: 14px", "font-size: 13pt");
+
+        QTextDocument documentoPDF;
+        documentoPDF.setDefaultFont(QFont("Arial", 11));
+        documentoPDF.setHtml(contenidoPDF);
+        documentoPDF.setPageSize(impresora.pageLayout().paintRect(QPageLayout::Point).size());
+        documentoPDF.print(&impresora);
+
+        const QFileInfo archivoPDF(rutaPDF);
+        if (!archivoPDF.exists() || archivoPDF.size() == 0) {
+            QMessageBox::critical(&dlgTicket, "Error", "No se pudo generar el archivo PDF.");
+            return;
+        }
+        QMessageBox mensajeGuardado(&dlgTicket);
+        mensajeGuardado.setWindowTitle("Ticket guardado");
+        mensajeGuardado.setText(QString("El ticket se guardó en:\n%1").arg(rutaPDF));
+        mensajeGuardado.setIcon(QMessageBox::Information);
+        mensajeGuardado.setStyleSheet(
+            "QMessageBox { background-color: #ffffff; } "
+            "QLabel { color: #111827; font-size: 13px; } "
+            "QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border: none; border-radius: 6px; padding: 6px 15px; }"
+        );
+        mensajeGuardado.exec();
+    });
 
     layoutDlg->addWidget(textViewer);
     layoutDlg->addSpacing(10);
-    layoutDlg->addWidget(btnCerrar);
+    layoutBotones->addWidget(btnDescargar);
+    layoutBotones->addWidget(btnCerrar);
+    layoutDlg->addLayout(layoutBotones);
 
     dlgTicket.exec();
 }

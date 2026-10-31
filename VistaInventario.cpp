@@ -1,5 +1,8 @@
 #include "VistaInventario.h"
+#include "CategoriasProducto.h"
 #include <QShowEvent>
+#include <QSignalBlocker>
+#include <utility>
 
 VistaInventario::VistaInventario(QWidget* parent) : QWidget(parent) {
     configurarInterfaz();
@@ -35,10 +38,13 @@ void VistaInventario::configurarInterfaz() {
     connect(txtBuscar, &QLineEdit::textChanged, this, &VistaInventario::filtrarTabla);
 
     comboCategoriaFiltro = new QComboBox(this);
-    comboCategoriaFiltro->addItems({"Todas las Categorías", "Snacks", "Bebidas", "Comida", "Útiles", "Higiene"});
+    comboCategoriaFiltro->addItem("Todas las Categorías");
+    comboCategoriaFiltro->addItems(categoriasProductoPredefinidas());
     comboCategoriaFiltro->setStyleSheet(
         "QComboBox { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; "
         "padding: 6px 12px; font-size: 12px; color: #111827; }"
+        "QComboBox QAbstractItemView { background-color: #ffffff; color: #111827; "
+        "selection-background-color: #d1fae5; selection-color: #111827; }"
     );
     connect(comboCategoriaFiltro, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &VistaInventario::filtrarTabla);
 
@@ -174,6 +180,28 @@ void VistaInventario::renderizarTabla() {
         tablaProductos->setItem(fila, 4, itemStock);
         tablaProductos->setItem(fila, 5, itemEstado);
     }
+
+    actualizarCategoriasFiltro();
+}
+
+void VistaInventario::actualizarCategoriasFiltro() {
+    const QString seleccion = comboCategoriaFiltro->currentText();
+    QSignalBlocker bloquearSenal(comboCategoriaFiltro);
+    comboCategoriaFiltro->clear();
+    comboCategoriaFiltro->addItem("Todas las Categorías");
+
+    QStringList categorias = categoriasProductoPredefinidas();
+    for (const auto& producto : listaProductos) {
+        const QString categoria = producto.categoria.trimmed();
+        if (!categoria.isEmpty() && !categorias.contains(categoria)) {
+            categorias.append(categoria);
+        }
+    }
+    comboCategoriaFiltro->addItems(categorias);
+
+    const int indice = comboCategoriaFiltro->findText(seleccion);
+    comboCategoriaFiltro->setCurrentIndex(indice >= 0 ? indice : 0);
+    filtrarTabla();
 }
 
 void VistaInventario::filtrarTabla() {
@@ -224,7 +252,20 @@ void VistaInventario::abrirFormularioProducto(ProductoItem* prodExistente) {
     if (esEdicion) inputDesc->setText(prodExistente->descripcion);
 
     QComboBox* comboCat = new QComboBox(&dlg);
-    comboCat->addItems({"Snacks", "Bebidas", "Comida", "Útiles", "Higiene"});
+    QStringList categorias = categoriasProductoPredefinidas();
+    for (const auto& producto : listaProductos) {
+        const QString categoria = producto.categoria.trimmed();
+        if (!categoria.isEmpty() && !categorias.contains(categoria)) {
+            categorias.append(categoria);
+        }
+    }
+    comboCat->addItems(categorias);
+    comboCat->setEditable(true);
+    comboCat->lineEdit()->setPlaceholderText("Seleccione o escriba una categoría");
+    comboCat->lineEdit()->setStyleSheet(
+        "QLineEdit { background-color: #ffffff; color: #111827; "
+        "selection-background-color: #d1fae5; selection-color: #111827; }"
+    );
     if (esEdicion) comboCat->setCurrentText(prodExistente->categoria);
 
     QDoubleSpinBox* spinPrecio = new QDoubleSpinBox(&dlg);
@@ -243,6 +284,10 @@ void VistaInventario::abrirFormularioProducto(ProductoItem* prodExistente) {
         "QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox { "
         "background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; "
         "padding: 6px 10px; font-size: 13px; color: #111827; min-height: 25px; } "
+        "QComboBox QLineEdit { background-color: #ffffff; color: #111827; "
+        "selection-background-color: #d1fae5; selection-color: #111827; } "
+        "QComboBox QAbstractItemView { background-color: #ffffff; color: #111827; "
+        "selection-background-color: #d1fae5; selection-color: #111827; } "
         "QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus { border: 1px solid #10b981; }";
 
     inputID->setStyleSheet(estiloCampos);
@@ -284,10 +329,11 @@ void VistaInventario::abrirFormularioProducto(ProductoItem* prodExistente) {
     );
 
     connect(btnGuardar, &QPushButton::clicked, [&]() {
-        if (inputID->text().trimmed().isEmpty() || inputNombre->text().trimmed().isEmpty()) {
+        const QString categoria = comboCat->currentText().trimmed();
+        if (inputID->text().trimmed().isEmpty() || inputNombre->text().trimmed().isEmpty() || categoria.isEmpty()) {
             QMessageBox msgBox(&dlg);
             msgBox.setWindowTitle("Campos Vacíos");
-            msgBox.setText("El código ID y el Nombre son obligatorios.");
+            msgBox.setText("El código ID, el Nombre y la Categoría son obligatorios.");
             msgBox.setIcon(QMessageBox::Warning);
             msgBox.setStyleSheet("QMessageBox { background-color: #ffffff; } QLabel { color: #111827; font-size: 13px; } QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border-radius: 6px; padding: 6px 15px; border: none; }");
             msgBox.exec();
@@ -298,50 +344,23 @@ void VistaInventario::abrirFormularioProducto(ProductoItem* prodExistente) {
         p.id = inputID->text().trimmed();
         p.nombre = inputNombre->text().trimmed();
         p.descripcion = inputDesc->text().trimmed();
-        p.categoria = comboCat->currentText();
+        p.categoria = categoria;
         p.precio = spinPrecio->value();
         p.stock = spinStock->value();
 
-        guardarProductoEnJSON(p, esEdicion);
-        dlg.accept();
+        if (guardarProductoEnJSON(p, esEdicion)) {
+            dlg.accept();
+        }
     });
 
     layoutDlg->addSpacing(10);
     layoutDlg->addWidget(btnGuardar);
 
-    dlg.exec();
-}
-
-void VistaInventario::guardarProductoEnJSON(const ProductoItem& prod, bool esEdicion) {
-    if (esEdicion) {
-        for (auto& p : listaProductos) {
-            if (p.id == prod.id) {
-                p = prod;
-                break;
-            }
-        }
-    } else {
-        for (const auto& p : listaProductos) {
-            if (p.id == prod.id) {
-                QMessageBox msgBox(this);
-                msgBox.setWindowTitle("ID Duplicado");
-                msgBox.setText("Ya existe un producto registrado con este código ID.");
-                msgBox.setIcon(QMessageBox::Warning);
-                msgBox.setStyleSheet("QMessageBox { background-color: #ffffff; } QLabel { color: #111827; font-size: 13px; } QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border-radius: 6px; padding: 6px 15px; border: none; }");
-                msgBox.exec();
-                return;
-            }
-        }
-        listaProductos.push_back(prod);
-    }
-
-    GestorJSON gestor;
-    if (gestor.guardarProductos(listaProductos)) {
-        renderizarTabla();
-
+    if (dlg.exec() == QDialog::Accepted) {
         QMessageBox msgBox(this);
         msgBox.setWindowTitle("Éxito");
-        msgBox.setText("El inventario se ha actualizado correctamente.");
+        msgBox.setText(esEdicion ? "El producto se actualizó correctamente."
+                                 : "El producto se guardó correctamente.");
         msgBox.setIcon(QMessageBox::Information);
         msgBox.setStyleSheet(
             "QMessageBox { background-color: #ffffff; } "
@@ -351,6 +370,42 @@ void VistaInventario::guardarProductoEnJSON(const ProductoItem& prod, bool esEdi
         );
         msgBox.exec();
     }
+}
+
+bool VistaInventario::guardarProductoEnJSON(const ProductoItem& prod, bool esEdicion) {
+    std::vector<ProductoItem> productosGuardados = listaProductos;
+    if (esEdicion) {
+        for (auto& p : productosGuardados) {
+            if (p.id == prod.id) {
+                p = prod;
+                break;
+            }
+        }
+    } else {
+        for (const auto& p : productosGuardados) {
+            if (p.id == prod.id) {
+                QMessageBox msgBox(this);
+                msgBox.setWindowTitle("ID Duplicado");
+                msgBox.setText("Ya existe un producto registrado con este código ID.");
+                msgBox.setIcon(QMessageBox::Warning);
+                msgBox.setStyleSheet("QMessageBox { background-color: #ffffff; } QLabel { color: #111827; font-size: 13px; } QPushButton { background-color: #10b981; color: #ffffff; font-weight: bold; border-radius: 6px; padding: 6px 15px; border: none; }");
+                msgBox.exec();
+                return false;
+            }
+        }
+        productosGuardados.push_back(prod);
+    }
+
+    GestorJSON gestor;
+    if (gestor.guardarProductos(productosGuardados)) {
+        listaProductos = std::move(productosGuardados);
+        renderizarTabla();
+        emit productosActualizados();
+        return true;
+    }
+
+    QMessageBox::critical(this, "Error", "No se pudo guardar el producto.");
+    return false;
 }
 
 void VistaInventario::eliminarProductoSeleccionado() {
@@ -378,16 +433,22 @@ void VistaInventario::eliminarProductoSeleccionado() {
     msgBox.exec();
 
     if (msgBox.clickedButton() == btnSi) {
-        for (auto it = listaProductos.begin(); it != listaProductos.end(); ++it) {
+        std::vector<ProductoItem> productosGuardados = listaProductos;
+        for (auto it = productosGuardados.begin(); it != productosGuardados.end(); ++it) {
             if (it->id == idProd) {
-                listaProductos.erase(it);
+                productosGuardados.erase(it);
                 break;
             }
         }
 
         GestorJSON gestor;
-        gestor.guardarProductos(listaProductos);
-        renderizarTabla();
+        if (gestor.guardarProductos(productosGuardados)) {
+            listaProductos = std::move(productosGuardados);
+            renderizarTabla();
+            emit productosActualizados();
+        } else {
+            QMessageBox::critical(this, "Error", "No se pudo guardar el inventario.");
+        }
     }
 }
 
